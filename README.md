@@ -2,6 +2,8 @@
 
 Run [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go) VPN client inside a Docker container on Ubuntu.
 
+The container uses `network_mode: host`, so the VPN tunnel routes **all host traffic** — not just traffic inside the container.
+
 **Image:** `kamasalyamov/awg-ubuntu-24-04:0.1.0`
 
 ---
@@ -110,9 +112,10 @@ Endpoint = 192.0.2.50:47808
 
 ## 4. Configure wg0.conf
 
-Paste the exported config into `config/wg0.conf`, then add the missing fields.
+Copy the example config and fill in your values:
 
 ```bash
+cp config/wg0_example.conf config/wg0.conf
 nano config/wg0.conf
 ```
 
@@ -124,7 +127,7 @@ Replace all `<...>` placeholders with your values:
 [Interface]
 PrivateKey = <PRIVATE_KEY>
 Address = <VPN_ADDRESS>
-DNS = 1.1.1.1, 1.0.0.1
+# DNS is handled in PostUp/PreDown (resolvconf does not work inside the container)
 Table = off
 # MTU = 1280                    # Uncomment if needed (see MTU section below)
 
@@ -143,11 +146,12 @@ H4 = <value>
 # 1. Protect SSH: keep traffic from HOST_IP on the main routing table
 # 2. Route VPN server endpoint through the local gateway (bypass tunnel)
 # 3. Set VPN as default route with low metric (takes priority)
-PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50
+# 4. Set VPN DNS servers (resolvconf doesn't work in a container)
+PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" > /etc/resolv.conf
 
 # ── PreDown ─────────────────────────────────────────────────────────────────
-# Reverse everything in opposite order
-PreDown = ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP> lookup main prio 100
+# Restore DNS, then reverse routing in opposite order
+PreDown = cp /etc/resolv.conf.bak /etc/resolv.conf; ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP> lookup main prio 100
 
 [Peer]
 PublicKey = <PEER_PUBLIC_KEY>
@@ -157,6 +161,8 @@ Endpoint = <VPN_ENDPOINT>:<PORT>
 PersistentKeepalive = 25
 ```
 
+> **Important:** Do NOT use the `DNS` directive from the exported config. The container has no systemd/D-Bus, so `resolvconf` fails. DNS is set directly in `PostUp`/`PreDown` instead.
+
 ### What each PostUp/PreDown command does
 
 | # | PostUp command | Purpose |
@@ -164,8 +170,9 @@ PersistentKeepalive = 25
 | 1 | `ip rule add from <HOST_IP> lookup main prio 100` | **SSH protection.** All traffic originating from your host's public IP uses the main (non-VPN) routing table. This keeps your SSH session alive. |
 | 2 | `ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>` | Route VPN encrypted packets to the server via your real gateway, not through the tunnel itself (would be a loop). |
 | 3 | `ip route add default dev wg0 metric 50` | Everything else goes through the VPN tunnel. Metric 50 is lower (= higher priority) than the default route. |
+| 4 | `cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver ..." > /etc/resolv.conf` | **DNS.** Backs up the host's DNS config and replaces it with VPN DNS servers. Restored on PreDown. |
 
-PreDown reverses these in opposite order.
+PreDown reverses these: first restores DNS from backup, then removes routes in opposite order.
 
 ---
 
@@ -209,8 +216,8 @@ ip route get <HOST_IP>
 If your host has **multiple IPs** that receive SSH (e.g. IPv4 + IPv6, or multiple interfaces), add a rule for each:
 
 ```ini
-PostUp = ip rule add from <HOST_IP_1> lookup main prio 100; ip rule add from <HOST_IP_2> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50
-PreDown = ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP_2> lookup main prio 100; ip rule del from <HOST_IP_1> lookup main prio 100
+PostUp = ip rule add from <HOST_IP_1> lookup main prio 100; ip rule add from <HOST_IP_2> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" > /etc/resolv.conf
+PreDown = cp /etc/resolv.conf.bak /etc/resolv.conf; ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP_2> lookup main prio 100; ip rule del from <HOST_IP_1> lookup main prio 100
 ```
 
 ### SSH on a non-standard port
@@ -286,8 +293,8 @@ Then add those CIDRs to `AllowedIPs`.
 Keep `AllowedIPs = 0.0.0.0/0` but bypass VPN for certain destinations:
 
 ```ini
-PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; ip route add 10.0.0.0/8 via <GATEWAY> dev <DEV>
-PreDown = ip route del 10.0.0.0/8 via <GATEWAY> dev <DEV>; ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP> lookup main prio 100
+PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" > /etc/resolv.conf; ip route add 10.0.0.0/8 via <GATEWAY> dev <DEV>
+PreDown = ip route del 10.0.0.0/8 via <GATEWAY> dev <DEV>; cp /etc/resolv.conf.bak /etc/resolv.conf; ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP> lookup main prio 100
 ```
 
 This sends `10.0.0.0/8` directly, everything else through VPN.
@@ -304,7 +311,7 @@ docker compose up -d
 Check logs:
 
 ```bash
-docker logs amneziawg
+docker compose logs
 ```
 
 Verify the tunnel is up:
@@ -323,6 +330,8 @@ ip route show
 ip rule show
 ```
 
+> Since the container uses `network_mode: host`, you can run `curl`, `ip route`, and `ip rule` directly on the host — no need for `docker exec`.
+
 ---
 
 ## 9. Stop the VPN
@@ -331,7 +340,7 @@ ip rule show
 docker compose down
 ```
 
-The container handles `SIGTERM` gracefully — it runs `awg-quick down wg0` before exiting, which triggers PreDown and restores routing cleanly.
+The container handles `SIGTERM` gracefully — it runs `awg-quick down wg0` before exiting, which triggers PreDown and restores routing and DNS cleanly.
 
 ---
 
@@ -356,12 +365,27 @@ docker compose up -d
 If you want to build the image yourself instead of pulling from Docker Hub:
 
 ```bash
-# In compose.yml, replace "image:" with "build:":
-#   build: .
-#   # image: kamasalyamov/awg-ubuntu-24-04:0.1.0
-
-docker compose up -d --build
+docker compose -f compose.build.yaml up -d --build
 ```
+
+---
+
+## Troubleshooting
+
+### `sd_bus_open_system: No such file or directory`
+
+This happens when the config contains a `DNS` line. The container has no systemd/D-Bus, so `resolvconf` fails. **Remove the `DNS` line** and use the PostUp/PreDown DNS commands shown in the config template above.
+
+### `sysctl not allowed in host network namespace`
+
+Docker cannot set `sysctls` in compose.yml when using `network_mode: host`. The entrypoint script sets them at runtime instead via `sysctl -w`. Make sure `compose.yml` does **not** have a `sysctls:` section.
+
+### Container restart loop
+
+Check logs with `docker compose logs`. Common causes:
+- Missing or invalid `wg0.conf` (check the mount path)
+- `DNS` line present in config (see above)
+- AmneziaWG kernel module not loaded on host (`sudo modprobe amneziawg`)
 
 ---
 
@@ -369,11 +393,13 @@ docker compose up -d --build
 
 ```
 awg/
-├── Dockerfile          # Multi-stage build (Ubuntu 24.04)
-├── compose.yml         # Docker Compose config
-├── entrypoint.sh       # Startup/shutdown script
+├── Dockerfile              # Multi-stage build (Ubuntu 24.04)
+├── compose.yml             # Docker Compose config (pre-built image)
+├── compose.build.yaml      # Docker Compose config (build from source)
+├── entrypoint.sh           # Startup/shutdown script
 ├── config/
-│   └── wg0.conf        # ← Your VPN configuration
+│   ├── wg0_example.conf    # Template — copy to wg0.conf and fill in
+│   └── wg0.conf            # ← Your VPN configuration (not in repo)
 └── README.md
 ```
 
@@ -386,13 +412,13 @@ awg/
 docker compose up -d
 
 # Logs
-docker logs -f amneziawg
+docker compose logs -f
 
 # Status
 docker exec amneziawg awg show wg0
 
 # My public IP
-docker exec amneziawg curl -s ifconfig.me
+curl -s ifconfig.me
 
 # Routes
 ip route show
