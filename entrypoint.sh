@@ -11,6 +11,11 @@ if [ ! -f "$AWG_CONFIG" ]; then
     exit 1
 fi
 
+# ── Set sysctls (must be done at runtime with host network mode) ─────────
+sysctl -w net.ipv4.conf.all.src_valid_mark=1
+sysctl -w net.ipv4.ip_forward=1
+sysctl -w net.ipv6.conf.all.forwarding=1
+
 if [ ! -e /dev/net/tun ]; then
     echo "Creating /dev/net/tun …"
     mkdir -p /dev/net
