@@ -3,13 +3,14 @@ services:
     image: kamasalyamov/awg-ubuntu-24-04:0.1.0
     container_name: amneziawg
     restart: unless-stopped
+    init: true # Recommended for signal handling
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./config/wg0.conf:/etc/amnezia/amneziawg/wg0.conf:ro
+      - ./config/wg0.conf:/etc/amnezia/amneziawg/wg0.conf:rw
     environment:
       - AWG_INTERFACE=wg0
     # Use host network so VPN routing works seamlessly

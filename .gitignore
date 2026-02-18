@@ -1,0 +1,5 @@
+# Ignore everything in the config folder
+config/*
+
+# Except this one file
+!config/wg0_example.conf
