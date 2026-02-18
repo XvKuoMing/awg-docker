@@ -146,8 +146,8 @@ H4 = <value>
 # 1. Protect SSH: keep traffic from HOST_IP on the main routing table
 # 2. Route VPN server endpoint through the local gateway (bypass tunnel)
 # 3. Set VPN as default route with low metric (takes priority)
-# 4. Set VPN DNS servers (resolvconf doesn't work in a container)
-PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" > /etc/resolv.conf
+# 4. Append VPN DNS (keeps your existing DNS — see DNS section below)
+PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" >> /etc/resolv.conf
 
 # ── PreDown ─────────────────────────────────────────────────────────────────
 # Restore DNS, then reverse routing in opposite order
@@ -170,9 +170,28 @@ PersistentKeepalive = 25
 | 1 | `ip rule add from <HOST_IP> lookup main prio 100` | **SSH protection.** All traffic originating from your host's public IP uses the main (non-VPN) routing table. This keeps your SSH session alive. |
 | 2 | `ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>` | Route VPN encrypted packets to the server via your real gateway, not through the tunnel itself (would be a loop). |
 | 3 | `ip route add default dev wg0 metric 50` | Everything else goes through the VPN tunnel. Metric 50 is lower (= higher priority) than the default route. |
-| 4 | `cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver ..." > /etc/resolv.conf` | **DNS.** Backs up the host's DNS config and replaces it with VPN DNS servers. Restored on PreDown. |
+| 4 | `cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver ..." >> /etc/resolv.conf` | **DNS.** Backs up the host's DNS config and **appends** VPN DNS servers. Your existing nameservers stay at the top and are queried first (see below). Restored from backup on PreDown. |
 
 PreDown reverses these: first restores DNS from backup, then removes routes in opposite order.
+
+### Why append (`>>`) instead of overwrite (`>`)
+
+If your host uses a **custom DNS resolver** (e.g. a local DNS that resolves internal hostnames, Pi-hole, dnsmasq, or a cloud-provided resolver), overwriting `/etc/resolv.conf` would **break that name resolution** while the VPN is active.
+
+By **appending** VPN DNS (`>>`) instead of overwriting (`>`), your `/etc/resolv.conf` ends up like:
+
+```
+nameserver 172.31.236.1    ← your existing DNS (queried first — resolves local hostnames)
+nameserver 1.1.1.1         ← VPN DNS (fallback)
+nameserver 1.0.0.1         ← VPN DNS (second fallback)
+```
+
+Linux resolvers query nameservers **in order**, so:
+- **Local/custom hostnames** keep resolving via your original DNS.
+- **Public domains** are resolved by your original DNS; if it can't answer, the system falls through to `1.1.1.1`.
+- If the container crashes before `PreDown`, your original DNS entries are **still present** at the top of the file (only two extra lines at the bottom).
+
+> **If you don't have custom DNS** and just want maximum privacy, you can change `>>` to `>` to use _only_ the VPN DNS servers. The backup/restore still works the same way.
 
 ---
 
@@ -216,7 +235,7 @@ ip route get <HOST_IP>
 If your host has **multiple IPs** that receive SSH (e.g. IPv4 + IPv6, or multiple interfaces), add a rule for each:
 
 ```ini
-PostUp = ip rule add from <HOST_IP_1> lookup main prio 100; ip rule add from <HOST_IP_2> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" > /etc/resolv.conf
+PostUp = ip rule add from <HOST_IP_1> lookup main prio 100; ip rule add from <HOST_IP_2> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" >> /etc/resolv.conf
 PreDown = cp /etc/resolv.conf.bak /etc/resolv.conf; ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP_2> lookup main prio 100; ip rule del from <HOST_IP_1> lookup main prio 100
 ```
 
@@ -293,7 +312,7 @@ Then add those CIDRs to `AllowedIPs`.
 Keep `AllowedIPs = 0.0.0.0/0` but bypass VPN for certain destinations:
 
 ```ini
-PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" > /etc/resolv.conf; ip route add 10.0.0.0/8 via <GATEWAY> dev <DEV>
+PostUp = ip rule add from <HOST_IP> lookup main prio 100; ip route add <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip route add default dev wg0 metric 50; cp /etc/resolv.conf /etc/resolv.conf.bak; echo -e "nameserver 1.1.1.1\nnameserver 1.0.0.1" >> /etc/resolv.conf; ip route add 10.0.0.0/8 via <GATEWAY> dev <DEV>
 PreDown = ip route del 10.0.0.0/8 via <GATEWAY> dev <DEV>; cp /etc/resolv.conf.bak /etc/resolv.conf; ip route del default dev wg0 metric 50; ip route del <VPN_ENDPOINT> via <GATEWAY> dev <DEV>; ip rule del from <HOST_IP> lookup main prio 100
 ```
 
