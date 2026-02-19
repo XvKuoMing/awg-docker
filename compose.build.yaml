@@ -7,8 +7,8 @@ services:
     privileged: true
     volumes:
       - ./config/wg0.conf:/etc/amnezia/amneziawg/wg0.conf:rw
-      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
-      - /run/systemd:/run/systemd:ro
+      # - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      # - /run/systemd:/run/systemd:ro
     environment:
       - AWG_INTERFACE=wg0
     # Use host network so VPN routing works seamlessly
