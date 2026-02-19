@@ -11,6 +11,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - ./config/wg0.conf:/etc/amnezia/amneziawg/wg0.conf:rw
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
     environment:
       - AWG_INTERFACE=wg0
     # Use host network so VPN routing works seamlessly
