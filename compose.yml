@@ -4,14 +4,11 @@ services:
     container_name: amneziawg
     restart: unless-stopped
     init: true # Recommended for signal handling
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    devices:
-      - /dev/net/tun:/dev/net/tun
+    privileged: true
     volumes:
       - ./config/wg0.conf:/etc/amnezia/amneziawg/wg0.conf:rw
-      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - /run/systemd:/run/systemd:ro
     environment:
       - AWG_INTERFACE=wg0
     # Use host network so VPN routing works seamlessly
